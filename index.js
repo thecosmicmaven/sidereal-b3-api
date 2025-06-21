@@ -37,11 +37,6 @@ const chartRulers = {
 };
 
 app.post('/calculate', (req, res) => {
-  // CORS headers to avoid browser blocking
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
   const { year, month, day, hour, minute, longitude, latitude } = req.body;
 
   if ([year, month, day, hour, minute, longitude, latitude].some(v => v === undefined)) {
@@ -55,4 +50,32 @@ app.post('/calculate', (req, res) => {
   swisseph.swe_calc_ut(jd, swisseph.SE_SUN, SE_SIDEREAL, (sunRes) => {
     if (sunRes.error) return res.status(500).json({ error: sunRes.error });
 
-    swisseph.swe_cal_
+    swisseph.swe_calc_ut(jd, swisseph.SE_MOON, SE_SIDEREAL, (moonRes) => {
+      if (moonRes.error) return res.status(500).json({ error: moonRes.error });
+
+      swisseph.swe_houses(jd, latitude, longitude, HOUSE_SYSTEM, (houseRes) => {
+        if (houseRes.error) return res.status(500).json({ error: houseRes.error });
+
+        const ascDeg = houseRes.ascendant;
+        const sunDeg = sunRes.longitude;
+        const moonDeg = moonRes.longitude;
+
+        const ascSign = getSign(ascDeg);
+        const sunSign = getSign(sunDeg);
+        const moonSign = getSign(moonDeg);
+        const chartRuler = chartRulers[ascSign];
+
+        res.json({
+          ascendant: ascSign,
+          sun: sunSign,
+          moon: moonSign,
+          chartRuler
+        });
+      });
+    });
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
