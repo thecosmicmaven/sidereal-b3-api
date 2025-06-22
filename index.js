@@ -1,16 +1,9 @@
-const express = require('express');
-const cors = require('cors');
-const swisseph = require('swisseph');
+// api/calculate.js (for Vercel serverless)
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const PORT = process.env.PORT || 3000;
+import swisseph from 'swisseph';
 
 const SE_SIDEREAL = swisseph.SE_SIDEREAL;
 const SIDEREAL_MODE = swisseph.SE_SIDM_LAHIRI;
-
 const HOUSE_SYSTEM = 'P';
 
 swisseph.setSiderealMode(SIDEREAL_MODE);
@@ -36,46 +29,70 @@ const chartRulers = {
   Pisces: 'Jupiter'
 };
 
-app.post('/calculate', (req, res) => {
+// Helper to promisify swisseph callbacks
+function swe_calc_ut_promise(jd, planet, flag) {
+  return new Promise((resolve, reject) => {
+    swisseph.swe_calc_ut(jd, planet, flag, (result) => {
+      if (result.error) reject(result.error);
+      else resolve(result);
+    });
+  });
+}
+
+function swe_houses_promise(jd, lat, lon, hs) {
+  return new Promise((resolve, reject) => {
+    swisseph.swe_houses(jd, lat, lon, hs, (result) => {
+      if (result.error) reject(result.error);
+      else resolve(result);
+    });
+  });
+}
+
+export default async function handler(req, res) {
+  // Allow CORS from any origin
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    // Handle preflight CORS request
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
   const { year, month, day, hour, minute, longitude, latitude } = req.body;
 
   if ([year, month, day, hour, minute, longitude, latitude].some(v => v === undefined)) {
     return res.status(400).json({ error: 'Missing parameters' });
   }
 
-  const jd = swisseph.swe_julday(year, month, day, hour + minute / 60, swisseph.SE_GREG_CAL);
+  try {
+    const jd = swisseph.swe_julday(year, month, day, hour + minute / 60, swisseph.SE_GREG_CAL);
+    swisseph.swe_set_sid_mode(SIDEREAL_MODE, 0, 0);
 
-  swisseph.swe_set_sid_mode(SIDEREAL_MODE, 0, 0);
+    const sunRes = await swe_calc_ut_promise(jd, swisseph.SE_SUN, SE_SIDEREAL);
+    const moonRes = await swe_calc_ut_promise(jd, swisseph.SE_MOON, SE_SIDEREAL);
+    const houseRes = await swe_houses_promise(jd, latitude, longitude, HOUSE_SYSTEM);
 
-  swisseph.swe_calc_ut(jd, swisseph.SE_SUN, SE_SIDEREAL, (sunRes) => {
-    if (sunRes.error) return res.status(500).json({ error: sunRes.error });
+    const ascDeg = houseRes.ascendant;
+    const sunDeg = sunRes.longitude;
+    const moonDeg = moonRes.longitude;
 
-    swisseph.swe_calc_ut(jd, swisseph.SE_MOON, SE_SIDEREAL, (moonRes) => {
-      if (moonRes.error) return res.status(500).json({ error: moonRes.error });
+    const ascSign = getSign(ascDeg);
+    const sunSign = getSign(sunDeg);
+    const moonSign = getSign(moonDeg);
+    const chartRuler = chartRulers[ascSign];
 
-      swisseph.swe_houses(jd, latitude, longitude, HOUSE_SYSTEM, (houseRes) => {
-        if (houseRes.error) return res.status(500).json({ error: houseRes.error });
-
-        const ascDeg = houseRes.ascendant;
-        const sunDeg = sunRes.longitude;
-        const moonDeg = moonRes.longitude;
-
-        const ascSign = getSign(ascDeg);
-        const sunSign = getSign(sunDeg);
-        const moonSign = getSign(moonDeg);
-        const chartRuler = chartRulers[ascSign];
-
-        res.json({
-          ascendant: ascSign,
-          sun: sunSign,
-          moon: moonSign,
-          chartRuler
-        });
-      });
+    return res.status(200).json({
+      ascendant: ascSign,
+      sun: sunSign,
+      moon: moonSign,
+      chartRuler
     });
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+  } catch (error) {
+    return res.status(500).json({ error: error.toString() });
+  }
+}
